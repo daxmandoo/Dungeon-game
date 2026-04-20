@@ -69,7 +69,7 @@
     <div id="panel">
       <h1>Dungeon Depths</h1>
       <p>Find your way through twisting stone halls and forgotten chambers.</p>
-      <p><strong>Move:</strong> W/A/S/D or Arrow keys (up/down + strafe left/right)</p>
+      <p><strong>Move:</strong> W/Arrow Up (forward), S/Arrow Down (back), A/Arrow Left (strafe left), D/Arrow Right (strafe right)</p>
       <p><strong>Look:</strong> Mouse movement or Q / E</p>
       <p><strong>Tip:</strong> Click to lock the mouse for smooth camera control.</p>
       <p class="hint">Click anywhere to enter the dungeon.</p>
@@ -84,6 +84,16 @@
 
       const mapWidth = 30;
       const mapHeight = 30;
+      const EPSILON = 0.00001;
+      const FOG_COLOR = [12, 17, 15];
+      const MAX_DEVICE_PIXEL_RATIO = 1.75;
+      const FOG_START_DISTANCE = 1.5;
+      const FOG_RANGE = 14;
+      const TORCH_RADIUS = 7.5;
+      const MAX_FRAME_TIME = 0.033;
+      const MIN_FRAME_TIME = 0.001;
+      const FLOOR_CEILING_TILE_SIZE = 4;
+      const MAX_SURFACE_RENDER_DISTANCE = 18;
       const map = Array.from({ length: mapHeight }, (_, y) =>
         Array.from({ length: mapWidth }, (_, x) =>
           x === 0 || y === 0 || x === mapWidth - 1 || y === mapHeight - 1 ? 1 : 0
@@ -181,7 +191,7 @@
       let frameCounter = 0;
 
       function resize() {
-        const dpr = Math.min(window.devicePixelRatio || 1, 1.75);
+        const dpr = Math.min(window.devicePixelRatio || 1, MAX_DEVICE_PIXEL_RATIO);
         width = Math.max(320, Math.floor(window.innerWidth * dpr));
         height = Math.max(200, Math.floor(window.innerHeight * dpr));
         canvas.width = width;
@@ -192,7 +202,7 @@
 
       document.addEventListener('keydown', (e) => {
         keys[e.key.toLowerCase()] = true;
-        if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(e.key.toLowerCase())) e.preventDefault();
+        if (["arrowup", "arrowdown", "arrowleft", "arrowright"].includes(e.key.toLowerCase())) e.preventDefault();
       });
       document.addEventListener('keyup', (e) => (keys[e.key.toLowerCase()] = false));
 
@@ -222,14 +232,12 @@
       }
 
       function fogBlend(r, g, b, dist) {
-        const fog = Math.min(1, Math.max(0, (dist - 1.5) / 14));
-        const fogR = 12;
-        const fogG = 17;
-        const fogB = 15;
+        const fog = Math.min(1, Math.max(0, (dist - FOG_START_DISTANCE) / FOG_RANGE));
+        const invFog = 1 - fog;
         return [
-          Math.round(r * (1 - fog) + fogR * fog),
-          Math.round(g * (1 - fog) + fogG * fog),
-          Math.round(b * (1 - fog) + fogB * fog),
+          Math.round(r * invFog + FOG_COLOR[0] * fog),
+          Math.round(g * invFog + FOG_COLOR[1] * fog),
+          Math.round(b * invFog + FOG_COLOR[2] * fog),
         ];
       }
 
@@ -237,8 +245,8 @@
         let mapX = Math.floor(player.x);
         let mapY = Math.floor(player.y);
 
-        const deltaDistX = Math.abs(1 / (rayDirX || 0.00001));
-        const deltaDistY = Math.abs(1 / (rayDirY || 0.00001));
+        const deltaDistX = Math.abs(1 / (rayDirX || EPSILON));
+        const deltaDistY = Math.abs(1 / (rayDirY || EPSILON));
 
         let stepX, stepY, sideDistX, sideDistY;
         if (rayDirX < 0) {
@@ -271,8 +279,8 @@
         }
 
         const perpDist = side === 0
-          ? (mapX - player.x + (1 - stepX) / 2) / (rayDirX || 0.00001)
-          : (mapY - player.y + (1 - stepY) / 2) / (rayDirY || 0.00001);
+          ? (mapX - player.x + (1 - stepX) / 2) / (rayDirX || EPSILON)
+          : (mapY - player.y + (1 - stepY) / 2) / (rayDirY || EPSILON);
 
         let wallX = side === 0 ? player.y + perpDist * rayDirY : player.x + perpDist * rayDirX;
         wallX -= Math.floor(wallX);
@@ -292,29 +300,31 @@
         const dirY = Math.sin(player.dir);
         const planeX = -dirY * Math.tan(player.fov / 2);
         const planeY = dirX * Math.tan(player.fov / 2);
+        const halfHeight = height / 2;
 
         for (let y = 0; y < height; y++) {
-          const isCeiling = y < height / 2;
-          const rel = isCeiling ? y / (height / 2) : (y - height / 2) / (height / 2);
+          const isCeiling = y < halfHeight;
+          const rel = isCeiling ? y / halfHeight : (y - halfHeight) / halfHeight;
           const base = isCeiling
             ? [28 - rel * 10, 33 - rel * 10, 30 - rel * 7]
             : [18 + rel * 34, 21 + rel * 24, 17 + rel * 14];
 
-          let rowDist = isCeiling ? (height / 2) / Math.max(1, (height / 2 - y)) : (height / 2) / Math.max(1, (y - height / 2));
-          rowDist = Math.min(18, rowDist);
+          const rowOffset = isCeiling ? (halfHeight - y) : (y - halfHeight);
+          let rowDist = rowOffset <= EPSILON ? MAX_SURFACE_RENDER_DISTANCE : halfHeight / rowOffset;
+          rowDist = Math.min(MAX_SURFACE_RENDER_DISTANCE, rowDist);
           for (let x = 0; x < width; x++) {
             const cameraX = 2 * x / width - 1;
             const rayX = dirX + planeX * cameraX;
             const rayY = dirY + planeY * cameraX;
             const worldX = player.x + rayX * rowDist;
             const worldY = player.y + rayY * rowDist;
-            const tx = Math.floor((worldX - Math.floor(worldX)) * 4);
-            const ty = Math.floor((worldY - Math.floor(worldY)) * 4);
+            const tx = Math.floor((worldX - Math.floor(worldX)) * FLOOR_CEILING_TILE_SIZE);
+            const ty = Math.floor((worldY - Math.floor(worldY)) * FLOOR_CEILING_TILE_SIZE);
             const pattern = ((tx + ty) & 1) ? 1.08 : 0.92;
             let [r, g, b] = [base[0] * pattern, base[1] * pattern, base[2] * pattern];
 
             if (!isCeiling) {
-              const torch = Math.max(0, 1 - Math.hypot(worldX - player.x, worldY - player.y) / 7.5);
+              const torch = Math.max(0, 1 - Math.hypot(worldX - player.x, worldY - player.y) / TORCH_RADIUS);
               r += torch * 12;
               g += torch * 7;
             }
@@ -443,7 +453,7 @@
       function loop(ts) {
         if (!running) return;
         const t = ts * 0.001;
-        const dt = Math.min(0.033, Math.max(0.001, t - (lastTime || t)));
+        const dt = Math.min(MAX_FRAME_TIME, Math.max(MIN_FRAME_TIME, t - (lastTime || t)));
         lastTime = t;
 
         update(dt);
