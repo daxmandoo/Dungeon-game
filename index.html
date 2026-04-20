@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Dungeon Depths</title>
   <style>
     :root {
@@ -13,15 +13,18 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
+      overscroll-behavior: none;
       background: #0c0f0d;
       font-family: "Trebuchet MS", Arial, sans-serif;
+      touch-action: none;
     }
     #game {
       display: block;
       width: 100vw;
-      height: 100vh;
+      height: 100dvh;
       image-rendering: pixelated;
       cursor: crosshair;
+      touch-action: none;
     }
     #overlay {
       position: fixed;
@@ -61,6 +64,90 @@
       color: #efc07f;
       font-weight: 700;
     }
+    #mobile-controls {
+      position: fixed;
+      inset: 0;
+      display: none;
+      z-index: 3;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+    body.touch-device #mobile-controls {
+      display: block;
+    }
+    #joystick {
+      position: absolute;
+      left: 1rem;
+      bottom: 1rem;
+      width: min(34vw, 168px);
+      height: min(34vw, 168px);
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.22);
+      border: 2px solid rgba(255, 255, 255, 0.16);
+      pointer-events: auto;
+      touch-action: none;
+    }
+    #joystick-stick {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 46%;
+      height: 46%;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background: rgba(243, 178, 107, 0.55);
+      border: 1px solid rgba(255, 225, 189, 0.65);
+    }
+    #look-area {
+      position: absolute;
+      right: 0;
+      top: 0;
+      width: 50vw;
+      height: 100%;
+      pointer-events: auto;
+      touch-action: none;
+    }
+    #look-area::after {
+      content: "LOOK";
+      position: absolute;
+      right: 1rem;
+      bottom: 1rem;
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      color: rgba(255, 228, 193, 0.55);
+      background: rgba(0, 0, 0, 0.24);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+      padding: 0.28rem 0.6rem;
+    }
+    #fullscreen-btn {
+      position: absolute;
+      right: 0.9rem;
+      top: 0.9rem;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      background: rgba(18, 22, 20, 0.55);
+      color: rgba(255, 235, 202, 0.95);
+      border-radius: 999px;
+      padding: 0.45rem 0.8rem;
+      font: inherit;
+      font-size: 0.82rem;
+      pointer-events: auto;
+      touch-action: manipulation;
+    }
+    @media (pointer: coarse) and (orientation: portrait) {
+      #joystick {
+        bottom: 0.8rem;
+        left: 0.8rem;
+        width: min(36vw, 152px);
+        height: min(36vw, 152px);
+      }
+      #fullscreen-btn {
+        top: 0.7rem;
+        right: 0.7rem;
+      }
+    }
   </style>
 </head>
 <body>
@@ -75,12 +162,24 @@
       <p class="hint">Click anywhere to enter the dungeon.</p>
     </div>
   </div>
+  <div id="mobile-controls" aria-hidden="true">
+    <div id="joystick">
+      <div id="joystick-stick"></div>
+    </div>
+    <div id="look-area"></div>
+    <button id="fullscreen-btn" type="button">Fullscreen</button>
+  </div>
 
   <script>
     (() => {
       const canvas = document.getElementById('game');
       const ctx = canvas.getContext('2d');
       const overlay = document.getElementById('overlay');
+      const joystick = document.getElementById('joystick');
+      const joystickStick = document.getElementById('joystick-stick');
+      const lookArea = document.getElementById('look-area');
+      const fullscreenBtn = document.getElementById('fullscreen-btn');
+      const isTouchDevice = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
 
       const mapWidth = 30;
       const mapHeight = 30;
@@ -182,6 +281,16 @@
       findSpawn();
 
       const keys = Object.create(null);
+      const touchControls = {
+        joyId: null,
+        joyCenterX: 0,
+        joyCenterY: 0,
+        joyX: 0,
+        joyY: 0,
+        lookId: null,
+        lookLastX: 0,
+        lookTurn: 0,
+      };
       let running = false;
       let width = 0;
       let height = 0;
@@ -191,14 +300,23 @@
       let frameCounter = 0;
 
       function resize() {
-        const dpr = Math.min(window.devicePixelRatio || 1, MAX_DEVICE_PIXEL_RATIO);
-        width = Math.max(320, Math.floor(window.innerWidth * dpr));
-        height = Math.max(200, Math.floor(window.innerHeight * dpr));
+        const viewportWidth = window.visualViewport?.width || window.innerWidth;
+        const viewportHeight = window.visualViewport?.height || window.innerHeight;
+        const maxDpr = isTouchDevice ? 1.25 : MAX_DEVICE_PIXEL_RATIO;
+        const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
+        width = Math.max(320, Math.floor(viewportWidth * dpr));
+        height = Math.max(200, Math.floor(viewportHeight * dpr));
         canvas.width = width;
         canvas.height = height;
       }
       resize();
       window.addEventListener('resize', resize);
+      window.visualViewport?.addEventListener('resize', resize);
+
+      if (isTouchDevice) {
+        document.body.classList.add('touch-device');
+        overlay.querySelector('.hint').textContent = 'Tap to enter the dungeon.';
+      }
 
       document.addEventListener('keydown', (e) => {
         keys[e.key.toLowerCase()] = true;
@@ -211,6 +329,102 @@
           player.dir += e.movementX * 0.0022;
         }
       });
+
+      function requestFullscreenAndLandscape() {
+        const fullscreen = document.fullscreenElement
+          ? Promise.resolve()
+          : (canvas.requestFullscreen?.() || document.documentElement.requestFullscreen?.() || Promise.resolve());
+        fullscreen.catch(() => {});
+        screen.orientation?.lock?.('landscape').catch(() => {});
+      }
+
+      function resetJoystick() {
+        touchControls.joyX = 0;
+        touchControls.joyY = 0;
+        joystickStick.style.transform = 'translate(-50%, -50%)';
+      }
+
+      function updateJoystickFromTouch(touch) {
+        const dx = touch.clientX - touchControls.joyCenterX;
+        const dy = touch.clientY - touchControls.joyCenterY;
+        const maxRadius = joystick.clientWidth * 0.35;
+        const len = Math.hypot(dx, dy) || 1;
+        const scale = len > maxRadius ? maxRadius / len : 1;
+        const stickX = dx * scale;
+        const stickY = dy * scale;
+
+        touchControls.joyX = Math.max(-1, Math.min(1, stickX / maxRadius));
+        touchControls.joyY = Math.max(-1, Math.min(1, stickY / maxRadius));
+        joystickStick.style.transform = `translate(calc(-50% + ${stickX}px), calc(-50% + ${stickY}px))`;
+      }
+
+      if (isTouchDevice) {
+        ['touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach((eventName) => {
+          document.addEventListener(eventName, (e) => e.preventDefault(), { passive: false });
+        });
+
+        joystick.addEventListener('touchstart', (e) => {
+          if (touchControls.joyId !== null) return;
+          const touch = e.changedTouches[0];
+          const rect = joystick.getBoundingClientRect();
+          touchControls.joyId = touch.identifier;
+          touchControls.joyCenterX = rect.left + rect.width / 2;
+          touchControls.joyCenterY = rect.top + rect.height / 2;
+          updateJoystickFromTouch(touch);
+        }, { passive: false });
+
+        joystick.addEventListener('touchmove', (e) => {
+          for (const touch of e.changedTouches) {
+            if (touch.identifier === touchControls.joyId) {
+              updateJoystickFromTouch(touch);
+              break;
+            }
+          }
+        }, { passive: false });
+
+        const stopJoystickTouch = (e) => {
+          for (const touch of e.changedTouches) {
+            if (touch.identifier === touchControls.joyId) {
+              touchControls.joyId = null;
+              resetJoystick();
+              break;
+            }
+          }
+        };
+        joystick.addEventListener('touchend', stopJoystickTouch, { passive: false });
+        joystick.addEventListener('touchcancel', stopJoystickTouch, { passive: false });
+
+        lookArea.addEventListener('touchstart', (e) => {
+          if (touchControls.lookId !== null) return;
+          const touch = e.changedTouches[0];
+          touchControls.lookId = touch.identifier;
+          touchControls.lookLastX = touch.clientX;
+        }, { passive: false });
+
+        lookArea.addEventListener('touchmove', (e) => {
+          for (const touch of e.changedTouches) {
+            if (touch.identifier === touchControls.lookId) {
+              const deltaX = touch.clientX - touchControls.lookLastX;
+              touchControls.lookLastX = touch.clientX;
+              touchControls.lookTurn += deltaX * 0.0048;
+              break;
+            }
+          }
+        }, { passive: false });
+
+        const stopLookTouch = (e) => {
+          for (const touch of e.changedTouches) {
+            if (touch.identifier === touchControls.lookId) {
+              touchControls.lookId = null;
+              break;
+            }
+          }
+        };
+        lookArea.addEventListener('touchend', stopLookTouch, { passive: false });
+        lookArea.addEventListener('touchcancel', stopLookTouch, { passive: false });
+
+        fullscreenBtn.addEventListener('click', requestFullscreenAndLandscape);
+      }
 
       function canMove(x, y) {
         const px = Math.floor(x);
@@ -437,6 +651,13 @@
         if (keys['q']) rotate -= 1;
         if (keys['e']) rotate += 1;
 
+        if (isTouchDevice) {
+          if (Math.abs(touchControls.joyY) > 0.08) fwd += -touchControls.joyY;
+          if (Math.abs(touchControls.joyX) > 0.08) strafe += touchControls.joyX;
+          rotate += touchControls.lookTurn;
+          touchControls.lookTurn = 0;
+        }
+
         const moveStep = player.moveSpeed * dt;
         const rotStep = player.rotSpeed * dt;
 
@@ -474,18 +695,26 @@
         if (running) return;
         running = true;
         overlay.style.display = 'none';
-        canvas.requestPointerLock?.();
+        if (isTouchDevice) {
+          requestFullscreenAndLandscape();
+        } else {
+          canvas.requestPointerLock?.();
+        }
         requestAnimationFrame(loop);
       }
 
       overlay.addEventListener('click', startGame);
+      overlay.addEventListener('touchstart', startGame, { passive: false });
       canvas.addEventListener('click', () => {
         if (!running) {
           startGame();
-        } else if (document.pointerLockElement !== canvas) {
+        } else if (!isTouchDevice && document.pointerLockElement !== canvas) {
           canvas.requestPointerLock?.();
         }
       });
+      canvas.addEventListener('touchstart', () => {
+        if (!running) startGame();
+      }, { passive: false });
     })();
   </script>
 </body>
